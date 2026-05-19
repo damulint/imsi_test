@@ -31,7 +31,10 @@ prompt_hidden() {
 find_client() {
   case "$DBMS" in
     oracle) command -v sqlplus 2>/dev/null ;;
-    mysql) command -v mysql 2>/dev/null ;;
+    mysql)
+      # MariaDB 10.x 환경은 mysql 명령이 없고 mariadb 명령만 있는 경우가 있음
+      command -v mariadb 2>/dev/null || command -v mysql 2>/dev/null
+      ;;
     postgresql) command -v psql 2>/dev/null ;;
     altibase) command -v is 2>/dev/null ;;
     tibero) command -v tbsql 2>/dev/null ;;
@@ -54,6 +57,10 @@ DB_USER="$(prompt_default 'DBUSER' '')"
 DB_PASS="$(prompt_hidden 'DBPASS')"
 DB_NAME="$(prompt_default 'DBNAME' '')"
 DB_SERVICE="$(prompt_default 'DBSERVICE/SID(if needed)' '')"
+DB_SOCKET=""
+if [ "$DBMS" = "mysql" ]; then
+  DB_SOCKET="$(prompt_default 'DBSOCKET(optional, blank=auto)' '')"
+fi
 
 CLIENT_BIN="$(find_client)"
 OUTFILE="kisa_${DBMS}_unix_$(hostname -s 2>/dev/null)_$(date '+%Y%m%d%H%M%S').txt"
@@ -105,7 +112,7 @@ mysql_run_once() {
   err="$(mktemp /tmp/kisa_mysql_err.XXXXXX 2>/dev/null || echo /tmp/kisa_mysql_err.$$)"
   tmpout="$(mktemp /tmp/kisa_mysql_out.XXXXXX 2>/dev/null || echo /tmp/kisa_mysql_out.$$)"
 
-  "$CLIENT_BIN" --batch --raw --skip-column-names --connect-timeout=5 "$@" -e "$q" >"$tmpout" 2>"$err"
+  "$CLIENT_BIN" --batch --raw --skip-column-names --connect-timeout=5 --show-warnings "$@" -e "$q" >"$tmpout" 2>"$err"
   rc=$?
 
   if [ -s "$err" ]; then
@@ -135,7 +142,10 @@ exec_sql() {
       # Build credential options safely. Do NOT pass -p when DB_PASS is empty.
       # Passing bare -p can make mysql prompt/hang or fail in root/unix_socket environments.
       local common_args=()
-      common_args+=("-u" "$DB_USER")
+      # DBUSER를 비워두면 클라이언트 기본 사용자로 접속한다. root unix_socket 환경에서 유용함.
+      if [ -n "$DB_USER" ]; then
+        common_args+=("-u" "$DB_USER")
+      fi
       if [ -n "$DB_PASS" ]; then
         common_args+=("-p${DB_PASS}")
       fi
@@ -150,7 +160,11 @@ exec_sql() {
         rc=$?
         if [ $rc -ne 0 ] && [ -z "$out" ]; then
           # Fallback for MariaDB/MySQL root accounts using unix_socket authentication.
-          out="$(mysql_run_once "$q" "mysql local socket fallback" "${common_args[@]}")"
+          if [ -n "${DB_SOCKET:-}" ]; then
+            out="$(mysql_run_once "$q" "mysql/mariadb socket fallback ${DB_SOCKET}" --socket "$DB_SOCKET" "${common_args[@]}")"
+          else
+            out="$(mysql_run_once "$q" "mysql/mariadb local socket fallback" "${common_args[@]}")"
+          fi
         fi
         printf "%s" "$out"
       else
@@ -193,7 +207,7 @@ exec_sql() {
 } > "$OUTFILE"
 
 append_raw "client" "$CLIENT_BIN"
-append_raw "mysql execution note" "v3: TCP first for localhost/127.0.0.1, socket fallback, no -p when password is empty, stderr preserved in sql errors"
+append_raw "mysql execution note" "v4-mariadb106: mariadb/mysql client auto-detect, TCP first for localhost/127.0.0.1, optional socket fallback, DBUSER can be blank, no -p when password is empty, stderr preserved in sql errors"
 append_raw "processes" "$(ps -ef | egrep -i 'oracle|tnslsnr|mysqld|mariadbd|mysql.server|postgres|altibase|tbsvr|tblistener|cub_master' | grep -v grep | head -50)"
 
 # Collect version and a few DBMS-specific raw outputs
@@ -211,24 +225,40 @@ case "$DBMS" in
     RAW26="$(exec_sql "set pages 0 feedback off verify off heading off; show parameter audit;")"
     ;;
   mysql)
-    RAW00="$(exec_sql "select @@version, @@version_comment, current_user(), user(), @@hostname, @@port;")"
+    RAW00="$(exec_sql "select @@version, @@version_comment, current_user(), user(), @@hostname, @@port, @@socket;")"
     VERSION_INFO="${RAW00:-$(exec_sql "select version();")}"
-    RAW01="$(exec_sql "select user,host,plugin from mysql.user where user in ('root','mysql.sys','mysql.session');")"
-    RAW03="$(exec_sql "show variables like 'validate_password%'; show variables like 'default_password_lifetime';")"
-    RAW04="$(exec_sql "SELECT GRANTEE, PRIVILEGE_TYPE FROM INFORMATION_SCHEMA.USER_PRIVILEGES WHERE PRIVILEGE_TYPE in ('SUPER','SYSTEM_USER','CREATE USER');")"
-    RAW05="$(exec_sql "show variables like 'password_history'; show variables like 'password_reuse_interval';")"
-    RAW09="$(exec_sql "show variables like 'failed_login_attempts'; show variables like 'password_lock_time';")"
-    RAW10="$(exec_sql "show variables like 'bind_address'; show variables like 'skip_networking'; show variables like 'port'; select user,host from mysql.user where host='%' or host like '0.0.0.0';")"
-    RAW11="$(exec_sql "SELECT GRANTEE, TABLE_SCHEMA, TABLE_NAME, PRIVILEGE_TYPE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE TABLE_SCHEMA in ('mysql','information_schema','performance_schema','sys');" | head -100)"
+    MYSQL_FLAVOR="mysql"
+    if printf "%s" "$VERSION_INFO" | grep -qi 'mariadb'; then MYSQL_FLAVOR="mariadb"; fi
+    append_raw "mysql flavor" "$MYSQL_FLAVOR"
+
+    if [ "$MYSQL_FLAVOR" = "mariadb" ]; then
+      # MariaDB 10.4+는 mysql.user가 호환 VIEW이고 실제 권한 메타는 mysql.global_priv에 JSON으로 저장됨.
+      RAW01="$(exec_sql "SELECT User,Host,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(Priv,'$.plugin')),''),COALESCE(JSON_UNQUOTE(JSON_EXTRACT(Priv,'$.account_locked')),''),COALESCE(JSON_UNQUOTE(JSON_EXTRACT(Priv,'$.password_last_changed')),'') FROM mysql.global_priv WHERE User in ('root','mysql','mariadb.sys','mysql.sys','mysql.session') OR User='' ORDER BY User,Host;")"
+      [ -n "$RAW01" ] || RAW01="$(exec_sql "select user,host,plugin from mysql.user where user in ('root','mysql','mariadb.sys','mysql.sys','mysql.session') or user='';")"
+      RAW03="$(exec_sql "show variables like 'strict_password_validation'; show variables like 'simple_password_check%'; show variables like 'cracklib_password_check%'; show variables like 'password_reuse_check%'; show plugins;")"
+      RAW05="$(exec_sql "show variables like 'password_reuse_check%'; show plugins; SELECT User,Host,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(Priv,'$.password_last_changed')),''),COALESCE(JSON_UNQUOTE(JSON_EXTRACT(Priv,'$.password_lifetime')),'') FROM mysql.global_priv ORDER BY User,Host;")"
+      RAW09="$(exec_sql "SELECT User,Host,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(Priv,'$.account_locked')),''),COALESCE(JSON_UNQUOTE(JSON_EXTRACT(Priv,'$.password_lifetime')),'') FROM mysql.global_priv ORDER BY User,Host;")"
+      RAW26="$(exec_sql "show variables like 'server_audit%'; show variables like 'audit%'; show variables like 'general_log'; show variables like 'log_error'; show variables like 'log_output'; show plugins;")"
+    else
+      RAW01="$(exec_sql "select user,host,plugin,account_locked,password_last_changed from mysql.user where user in ('root','mysql.sys','mysql.session') or user='';")"
+      RAW03="$(exec_sql "show variables like 'validate_password%'; show variables like 'default_password_lifetime';")"
+      RAW05="$(exec_sql "show variables like 'password_history'; show variables like 'password_reuse_interval';")"
+      RAW09="$(exec_sql "show variables like 'failed_login_attempts'; show variables like 'password_lock_time';")"
+      RAW26="$(exec_sql "show variables like 'audit%'; show variables like 'general_log'; show variables like 'log_error'; show variables like 'log_output';")"
+    fi
+
+    RAW04="$(exec_sql "SELECT GRANTEE, PRIVILEGE_TYPE FROM INFORMATION_SCHEMA.USER_PRIVILEGES WHERE PRIVILEGE_TYPE in ('SUPER','SYSTEM_USER','CREATE USER','FILE','PROCESS','SHUTDOWN','RELOAD') ORDER BY GRANTEE, PRIVILEGE_TYPE;")"
+    RAW10="$(exec_sql "show variables like 'bind_address'; show variables like 'skip_networking'; show variables like 'port'; show variables like 'socket'; select user,host from mysql.user where host='%' or host like '0.0.0.0' or host like '::%';")"
+    RAW11="$(exec_sql "SELECT GRANTEE, TABLE_SCHEMA, TABLE_NAME, PRIVILEGE_TYPE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE TABLE_SCHEMA in ('mysql','information_schema','performance_schema','sys') ORDER BY GRANTEE,TABLE_SCHEMA,TABLE_NAME,PRIVILEGE_TYPE;" | head -200)"
+    RAW14="$( (for f in /etc/my.cnf /etc/mysql/my.cnf /etc/mysql/mariadb.conf.d/*.cnf /etc/my.cnf.d/*.cnf "$HOME/.my.cnf"; do [ -e "$f" ] && ls -l "$f" && grep -HnEi '^(\s*)?(bind-address|skip-networking|socket|port|plugin-load|server_audit|general_log|log_error|datadir)' "$f" 2>/dev/null; done) | head -200 )"
     RAW20_SCHEMA="$(exec_sql "SELECT table_schema, COUNT(*) AS table_count FROM information_schema.tables WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys') GROUP BY table_schema ORDER BY table_schema;")"
-    RAW20_VIEWS="$(exec_sql "SELECT TABLE_SCHEMA, TABLE_NAME, DEFINER FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys');" | head -200)"
-    RAW20_TRIGGERS="$(exec_sql "SELECT TRIGGER_SCHEMA, TRIGGER_NAME, DEFINER FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys');" | head -200)"
-    RAW20_ROUTINES="$(exec_sql "SELECT ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE, DEFINER FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys');" | head -200)"
-    RAW20_EVENTS="$(exec_sql "SELECT EVENT_SCHEMA, EVENT_NAME, DEFINER FROM INFORMATION_SCHEMA.EVENTS WHERE EVENT_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys');" | head -200)"
-    RAW20_SCH_PRIVS="$(exec_sql "SELECT GRANTEE, TABLE_SCHEMA, PRIVILEGE_TYPE FROM INFORMATION_SCHEMA.SCHEMA_PRIVILEGES WHERE TABLE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys');" | head -200)"
-    RAW20_TBL_PRIVS="$(exec_sql "SELECT GRANTEE, TABLE_SCHEMA, TABLE_NAME, PRIVILEGE_TYPE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE TABLE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys');" | head -200)"
-    RAW21="$(exec_sql "SELECT GRANTEE, TABLE_SCHEMA, TABLE_NAME, IS_GRANTABLE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE IS_GRANTABLE='YES';" | head -100)"
-    RAW26="$(exec_sql "show variables like 'audit%'; show variables like 'general_log'; show variables like 'log_error'; show variables like 'log_output';")"
+    RAW20_VIEWS="$(exec_sql "SELECT TABLE_SCHEMA, TABLE_NAME, DEFINER, SECURITY_TYPE FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys') ORDER BY TABLE_SCHEMA,TABLE_NAME;" | head -200)"
+    RAW20_TRIGGERS="$(exec_sql "SELECT TRIGGER_SCHEMA, TRIGGER_NAME, DEFINER FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys') ORDER BY TRIGGER_SCHEMA,TRIGGER_NAME;" | head -200)"
+    RAW20_ROUTINES="$(exec_sql "SELECT ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE, DEFINER, SECURITY_TYPE FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys') ORDER BY ROUTINE_SCHEMA,ROUTINE_NAME;" | head -200)"
+    RAW20_EVENTS="$(exec_sql "SELECT EVENT_SCHEMA, EVENT_NAME, DEFINER FROM INFORMATION_SCHEMA.EVENTS WHERE EVENT_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys') ORDER BY EVENT_SCHEMA,EVENT_NAME;" | head -200)"
+    RAW20_SCH_PRIVS="$(exec_sql "SELECT GRANTEE, TABLE_SCHEMA, PRIVILEGE_TYPE FROM INFORMATION_SCHEMA.SCHEMA_PRIVILEGES WHERE TABLE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys') ORDER BY GRANTEE,TABLE_SCHEMA,PRIVILEGE_TYPE;" | head -200)"
+    RAW20_TBL_PRIVS="$(exec_sql "SELECT GRANTEE, TABLE_SCHEMA, TABLE_NAME, PRIVILEGE_TYPE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE TABLE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys') ORDER BY GRANTEE,TABLE_SCHEMA,TABLE_NAME,PRIVILEGE_TYPE;" | head -200)"
+    RAW21="$(exec_sql "SELECT GRANTEE, TABLE_SCHEMA, TABLE_NAME, PRIVILEGE_TYPE, IS_GRANTABLE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE IS_GRANTABLE='YES' ORDER BY GRANTEE,TABLE_SCHEMA,TABLE_NAME,PRIVILEGE_TYPE;" | head -200)"
     RAW20="[Schema Summary]
 ${RAW20_SCHEMA}
 
@@ -248,7 +278,7 @@ ${RAW20_EVENTS}
 ${RAW20_SCH_PRIVS}
 
 [Table Privileges]
-${RAW20_TBL_PRIVS}" 
+${RAW20_TBL_PRIVS}"
     ;;
   postgresql)
     VERSION_INFO="$(exec_sql "select version();")"
