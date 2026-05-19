@@ -1,0 +1,3 @@
+sed -i 's/\r$//' MariaDB_Linux.sh
+chmod +x mariaDB_linux_update.sh
+./mariaDB_linux_update.sh
