@@ -783,6 +783,14 @@ log "Host : $HOST"
 log "Port : $PORT"
 log "Client : $CLIENT"
 
+###############################################################################
+# RAWLOG Cleanup
+###############################################################################
+
+if [ -f "$RAWLOG" ] && [ ! -s "$RAWLOG" ]; then
+    rm -f "$RAWLOG"
+fi
+
 echo ""
 echo ""
 echo "Please Return your $RESULT"
