@@ -753,23 +753,21 @@ log "Oracle 환경에 대한 설정부분으로 해당사항 없음"
 log ""
 
 ###############################################################################
-# MariaDB Process Check
+# MariaDB/MySQL Process Check
 ###############################################################################
 
 log ""
-log "------------------------MariaDB Process Check---------------------------"
-log "[명령어] ps -ef | grep mariadb"
+log "------------------------MariaDB/MySQL Process Check---------------------------"
+log "[명령어] ps -ef | egrep '[m]ariadb|[m]ariadbd|[m]ysqld'"
 
 echo ""
-echo "------------------------MariaDB Process Check---------------------------"
-echo "[명령어] ps -ef | grep mariadb"
+echo "------------------------MariaDB/MySQL Process Check---------------------------"
+echo "[명령어] ps -ef | egrep '[m]ariadb|[m]ariadbd|[m]ysqld'"
 
-MARIADB_PS_RESULT=$(ps -ef | grep mariadb | grep -v grep)
-
-if [ -n "$MARIADB_PS_RESULT" ]; then
-    echo "$MARIADB_PS_RESULT" | tee -a "$RESULT"
+if ps -ef | egrep '[m]ariadb|[m]ariadbd|[m]ysqld' | tee -a "$RESULT"; then
+    :
 else
-    echo "mariadb 프로세스가 확인되지 않음" | tee -a "$RESULT"
+    echo "MariaDB/MySQL 프로세스가 확인되지 않음" | tee -a "$RESULT"
 fi
 
 log ""
