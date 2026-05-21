@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amazon Lightsail AL2 → AL2023 이전 작업 가이드 - nginx/php-fpm/MariaDB/아미나빌더</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --ok: #047857;
+      --warn: #b45309;
+      --danger: #b91c1c;
+      --code-bg: #0f172a;
+      --code-text: #e5e7eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", Roboto, Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.65;
+    }
+    header {
+      background: linear-gradient(135deg, #1e3a8a, #2563eb);
+      color: #fff;
+      padding: 42px 24px;
+    }
+    header .wrap, main { max-width: 1120px; margin: 0 auto; }
+    h1 { margin: 0 0 12px; font-size: 32px; line-height: 1.25; }
+    h2 { margin-top: 42px; padding-bottom: 8px; border-bottom: 2px solid var(--line); font-size: 24px; }
+    h3 { margin-top: 28px; font-size: 19px; }
+    p { margin: 10px 0; }
+    main { padding: 28px 20px 60px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 22px;
+      margin: 18px 0;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, .06);
+    }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #dbeafe;
+      color: #1e40af;
+      font-size: 13px;
+      font-weight: 700;
+      margin-right: 6px;
+    }
+    .note, .warning, .danger, .success {
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin: 14px 0;
+    }
+    .note { background: #eff6ff; border-left: 5px solid var(--primary); }
+    .warning { background: #fffbeb; border-left: 5px solid var(--warn); }
+    .danger { background: #fef2f2; border-left: 5px solid var(--danger); }
+    .success { background: #ecfdf5; border-left: 5px solid var(--ok); }
+    code.inline { background: #eef2ff; color: #3730a3; padding: 2px 6px; border-radius: 6px; }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 16px;
+      border-radius: 14px;
+      overflow-x: auto;
+      font-size: 14px;
+      line-height: 1.55;
+      border: 1px solid #1f2937;
+    }
+    pre code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; background: #fff; }
+    th, td { border: 1px solid var(--line); padding: 10px 12px; vertical-align: top; }
+    th { background: #f3f4f6; text-align: left; }
+    .checklist label { display: block; padding: 6px 0; }
+    .small { color: var(--muted); font-size: 13px; }
+    .toc a { color: var(--primary-dark); text-decoration: none; }
+    .toc li { margin: 6px 0; }
+    footer { color: var(--muted); font-size: 13px; text-align: center; padding: 24px; }
+    @media print {
+      body { background: #fff; }
+      header { background: #fff; color: #111827; border-bottom: 2px solid #ddd; }
+      .card { box-shadow: none; break-inside: avoid; }
+      pre { white-space: pre-wrap; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>Amazon Lightsail Amazon Linux 2 → Amazon Linux 2023 이전 작업 가이드</h1>
+    <p>대상 환경: <strong>nginx + PHP-FPM 8.0.30 + MariaDB + 아미나빌더/그누보드</strong></p>
+    <p>웹 루트: <strong>/home/계정/www</strong></p>
+    <p class="small" style="color:#dbeafe">작성일: 2026-05-21 / 목적: 신규 AL2023 서버 구축 후 파일·DB 이전 및 DNS 또는 Static IP 전환</p>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2 id="summary">0. 핵심 요약</h2>
+    <p><span class="pill">권장 방식</span>기존 Amazon Linux 2 인스턴스를 직접 업그레이드하지 않고, <strong>새 Amazon Linux 2023 Lightsail 인스턴스를 생성한 뒤 소스·DB·설정을 이전</strong>한다.</p>
+    <p><span class="pill">현재 PHP</span>기존 PHP 버전이 <strong>8.0.30</strong>이므로 새 서버도 우선 PHP 8.0 계열 또는 가장 가까운 8.x 계열로 맞춘 뒤 테스트한다.</p>
+    <p><span class="pill">웹 루트</span>기존 웹 루트는 <strong>/home/계정/www</strong> 기준으로 작성한다. 실제 계정명은 이 문서에서 <code class="inline">WEBUSER</code>로 표기한다.</p>
+    <div class="warning">
+      <strong>중요:</strong> 아미나빌더/그누보드/스킨/플러그인 호환성 때문에 OS 이전, PHP 업그레이드, 그누보드 업데이트, 아미나빌더 업데이트를 동시에 진행하지 않는다. 이번 작업은 우선 <strong>OS와 서버 이전</strong>에 집중한다.
+    </div>
+  </section>
+
+  <section class="card toc">
+    <h2 id="toc">목차</h2>
+    <ol>
+      <li>#variables작업 변수 정리</a></li>
+      <li><a href="#precheck">기존 AL2 서버 점검</a></li>
+      <li><a href="#backup">기존 서버 백업</a></li>
+      <li><a href="#new-instance">새 AL2023 Lightsail 생성</a></li>
+      <li><a href="#install-stack">nginx / PHP-FPM / MariaDB 설치</a></li>
+      <li><a href="#restore">소스와 DB 복원</a></li>
+      <li><a href="#nginx-conf">nginx 설정</a></li>
+      <li><a href="#test">사전 테스트</a></li>
+      <li><a href="#cutover">최종 전환</a></li>
+      <li><a href="#rollback">롤백 계획</a></li>
+      <li><a href="#checklist">체크리스트</a></li>
+    </ol>
+  </section>
+
+  <section class="card" id="variables">
+    <h2>1. 작업 변수 정리</h2>
+    <p>아래 값은 실제 환경에 맞게 바꿔서 사용한다.</p>
+    <table>
+      <thead><tr><th>항목</th><th>예시</th><th>설명</th></tr></thead>
+      <tbody>
+        <tr><td>WEBUSER</td><td>ec2-user 또는 사이트 계정명</td><td>웹 루트가 /home/WEBUSER/www인 계정</td></tr>
+        <tr><td>DOMAIN</td><td>example.com</td><td>운영 도메인</td></tr>
+        <tr><td>DB_NAME</td><td>gnuboard</td><td>그누보드/아미나 DB명</td></tr>
+        <tr><td>DB_USER</td><td>gnuboard_user</td><td>DB 접속 사용자</td></tr>
+        <tr><td>NEW_IP</td><td>새 Lightsail 공인 IP</td><td>신규 AL2023 서버 IP</td></tr>
+        <tr><td>OLD_IP</td><td>기존 Lightsail 공인 IP</td><td>기존 AL2 서버 IP</td></tr>
+      </tbody>
+    </table>
+    <pre><code># 이 문서의 예시 변수
+WEBUSER="ec2-user"
+DOMAIN="example.com"
+DB_NAME="gnuboard"
+DB_USER="gnuboard_user"
+WEBROOT="/home/${WEBUSER}/www"</code></pre>
+  </section>
+
+  <section class="card" id="precheck">
+    <h2>2. 기존 Amazon Linux 2 서버 점검</h2>
+    <h3>2-1. 기본 버전 확인</h3>
+    <pre><code>cat /etc/os-release
+uname -a
+nginx -v
+php -v
+php -m
+mysql --version
+mariadb --version 2>/dev/null
+
+systemctl status nginx --no-pager
+systemctl status php-fpm --no-pager
+systemctl status mariadb --no-pager</code></pre>
+
+    <h3>2-2. nginx 웹 루트와 도메인 확인</h3>
+    <pre><code>sudo grep -R "server_name\|root " /etc/nginx/nginx.conf /etc/nginx/conf.d 2>/dev/null</code></pre>
+
+    <h3>2-3. DB 정보 확인</h3>
+    <p>그누보드/아미나 환경은 보통 <code class="inline">dbconfig.php</code>에 DB 정보가 들어 있다.</p>
+    <pre><code>cd /home/계정/www
+sed -n '1,120p' dbconfig.php</code></pre>
+
+    <h3>2-4. 용량 확인</h3>
+    <pre><code>df -h
+sudo du -sh /home/계정/www
+sudo du -sh /home/계정/www/data 2>/dev/null</code></pre>
+
+    <h3>2-5. cron 확인</h3>
+    <pre><code>crontab -l
+sudo ls -al /etc/cron* 2>/dev/null</code></pre>
+  </section>
+
+  <section class="card" id="backup">
+    <h2>3. 기존 서버 백업</h2>
+    <div class="danger">
+      <strong>필수:</strong> 작업 전 Lightsail 콘솔에서 기존 인스턴스의 수동 스냅샷을 생성한다. 스냅샷 완료 전에는 본 작업을 진행하지 않는다.
+    </div>
+
+    <h3>3-1. 웹 파일 백업</h3>
+    <pre><code>sudo mkdir -p /home/계정/migration-backup
+cd /home/계정
+sudo tar czvpf /home/계정/migration-backup/www-backup-$(date +%F).tar.gz www</code></pre>
+
+    <h3>3-2. DB 백업</h3>
+    <p>DB명은 <code class="inline">dbconfig.php</code>에서 확인한 값을 사용한다.</p>
+    <pre><code>mysqldump -u root -p \
+  --single-transaction \
+  --routines \
+  --triggers \
+  --events \
+  --default-character-set=utf8mb4 \
+  DB_NAME > /home/계정/migration-backup/DB_NAME-$(date +%F).sql</code></pre>
+
+    <h3>3-3. nginx/PHP/MariaDB 설정 백업</h3>
+    <pre><code>sudo tar czvpf /home/계정/migration-backup/etc-nginx-$(date +%F).tar.gz /etc/nginx
+sudo tar czvpf /home/계정/migration-backup/etc-php-$(date +%F).tar.gz /etc/php.ini /etc/php-fpm.d 2>/dev/null || true
+sudo tar czvpf /home/계정/migration-backup/etc-mysql-$(date +%F).tar.gz /etc/my.cnf /etc/my.cnf.d 2>/dev/null || true</code></pre>
+  </section>
+
+  <section class="card" id="new-instance">
+    <h2>4. 새 Amazon Linux 2023 Lightsail 인스턴스 생성</h2>
+    <ol>
+      <li>Lightsail 콘솔에서 새 인스턴스를 생성한다.</li>
+      <li>Blueprint는 <strong>OS Only → Amazon Linux 2023</strong>을 선택한다.</li>
+      <li>리전은 기존 서버와 동일하게 선택한다.</li>
+      <li>플랜은 기존과 동일하거나 한 단계 높은 사양을 권장한다.</li>
+      <li>Networking에서 TCP 22, 80, 443을 허용한다.</li>
+    </ol>
+
+    <h3>4-1. 새 서버 기본 업데이트</h3>
+    <pre><code>sudo dnf update -y
+sudo dnf install -y vim git unzip tar rsync wget curl policycoreutils-python-utils
+sudo timedatectl set-timezone Asia/Hong_Kong
+# 한국 시간으로 운영 중이면 아래 사용
+# sudo timedatectl set-timezone Asia/Seoul</code></pre>
+  </section>
+
+  <section class="card" id="install-stack">
+    <h2>5. 새 AL2023 서버에 nginx / PHP-FPM / MariaDB 설치</h2>
+
+    <h3>5-1. nginx 설치</h3>
+    <pre><code>sudo dnf install -y nginx
+sudo systemctl enable --now nginx
+sudo systemctl status nginx --no-pager</code></pre>
+
+    <h3>5-2. PHP-FPM 설치</h3>
+    <p>기존 PHP가 <strong>8.0.30</strong>이므로 새 서버에서도 우선 PHP 8.x 계열로 맞춘다. AL2023 기본 저장소에서 제공되는 PHP 버전을 먼저 확인한다.</p>
+    <pre><code>sudo dnf module list php || true
+sudo dnf search php-fpm
+sudo dnf list available "php*" | head -100</code></pre>
+
+    <p>기본 저장소 PHP를 사용하는 경우:</p>
+    <pre><code>sudo dnf install -y \
+  php php-fpm php-cli php-common php-mysqlnd \
+  php-gd php-mbstring php-xml php-opcache \
+  php-curl php-zip php-intl
+
+php -v
+php -m</code></pre>
+
+    <div class="note">
+      <strong>참고:</strong> AL2023 기본 저장소에서 PHP 8.0이 제공되지 않고 8.1/8.2 이상만 제공될 수 있다. 이 경우 아미나/그누보드/스킨 호환성 테스트가 필수다. 반드시 전환 전에 hosts 파일 테스트로 오류 로그를 확인한다.
+    </div>
+
+    <h3>5-3. PHP-FPM pool 설정</h3>
+    <pre><code>sudo vi /etc/php-fpm.d/www.conf</code></pre>
+    <pre><code>; 주요 값 예시
+user = nginx
+group = nginx
+listen = /run/php-fpm/www.sock
+listen.owner = nginx
+listen.group = nginx
+listen.mode = 0660</code></pre>
+
+    <h3>5-4. php.ini 설정</h3>
+    <pre><code>sudo vi /etc/php.ini</code></pre>
+    <pre><code>date.timezone = Asia/Hong_Kong
+memory_limit = 256M
+upload_max_filesize = 64M
+post_max_size = 64M
+max_execution_time = 60
+max_input_vars = 3000
+short_open_tag = On</code></pre>
+    <pre><code>sudo systemctl enable --now php-fpm
+sudo systemctl restart php-fpm
+sudo systemctl status php-fpm --no-pager</code></pre>
+
+    <h3>5-5. MariaDB 설치</h3>
+    <pre><code>sudo dnf search mariadb
+sudo dnf list available "mariadb*" | head -100</code></pre>
+    <pre><code># 가능한 경우 MariaDB 10.5 계열
+sudo dnf install -y mariadb105-server mariadb105 || sudo dnf install -y mariadb-server mariadb
+
+sudo systemctl enable --now mariadb
+sudo systemctl status mariadb --no-pager
+sudo mysql_secure_installation</code></pre>
+
+    <h3>5-6. MariaDB 문자셋 설정</h3>
+    <pre><code>sudo vi /etc/my.cnf.d/mariadb-server.cnf</code></pre>
+    <pre><code>[mysqld]
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+max_allowed_packet = 64M</code></pre>
+    <pre><code>sudo systemctl restart mariadb</code></pre>
+  </section>
+
+  <section class="card" id="restore">
+    <h2>6. 소스와 DB 복원</h2>
+
+    <h3>6-1. 새 서버에 웹 계정 생성</h3>
+    <p>기존 웹 루트가 <code class="inline">/home/계정/www</code>이므로 새 서버에도 동일한 계정명을 만드는 것을 권장한다.</p>
+    <pre><code>sudo useradd -m 계정 || true
+sudo passwd 계정
+sudo mkdir -p /home/계정/www</code></pre>
+
+    <h3>6-2. 기존 서버에서 새 서버로 파일 전송</h3>
+    <p>기존 서버에서 실행:</p>
+    <pre><code>rsync -avz --numeric-ids \
+  -e "ssh -i /path/to/key.pem" \
+  /home/계정/www/ ec2-user@NEW_IP:/tmp/www/</code></pre>
+
+    <p>새 서버에서 실행:</p>
+    <pre><code>sudo rsync -av /tmp/www/ /home/계정/www/
+sudo chown -R nginx:nginx /home/계정/www
+sudo find /home/계정/www -type d -exec chmod 755 {} \;
+sudo find /home/계정/www -type f -exec chmod 644 {} \;
+
+# 그누보드/아미나 data 디렉터리는 쓰기 권한 필요
+sudo chown -R nginx:nginx /home/계정/www/data
+sudo chmod -R 707 /home/계정/www/data</code></pre>
+
+    <h3>6-3. DB 생성</h3>
+    <pre><code>sudo mysql -u root -p</code></pre>
+    <pre><code>CREATE DATABASE DB_NAME DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'DB_USER'@'localhost' IDENTIFIED BY '강력한비밀번호';
+GRANT ALL PRIVILEGES ON DB_NAME.* TO 'DB_USER'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;</code></pre>
+
+    <h3>6-4. DB 복원</h3>
+    <p>기존 서버에서 DB 백업 파일을 새 서버로 전송:</p>
+    <pre><code>scp -i /path/to/key.pem /home/계정/migration-backup/DB_NAME-YYYY-MM-DD.sql ec2-user@NEW_IP:/tmp/</code></pre>
+    <p>새 서버에서 복원:</p>
+    <pre><code>mysql -u DB_USER -p DB_NAME < /tmp/DB_NAME-YYYY-MM-DD.sql
+mysql -u DB_USER -p -e "USE DB_NAME; SHOW TABLES;"</code></pre>
+
+    <h3>6-5. dbconfig.php 확인</h3>
+    <pre><code>sudo vi /home/계정/www/dbconfig.php</code></pre>
+    <pre><code>define('G5_MYSQL_HOST', 'localhost');
+define('G5_MYSQL_USER', 'DB_USER');
+define('G5_MYSQL_PASSWORD', 'DB비밀번호');
+define('G5_MYSQL_DB', 'DB_NAME');</code></pre>
+
+    <h3>6-6. 캐시/세션 정리</h3>
+    <pre><code>sudo rm -rf /home/계정/www/data/cache/*
+sudo rm -rf /home/계정/www/data/session/*
+sudo chown -R nginx:nginx /home/계정/www/data</code></pre>
+  </section>
+
+  <section class="card" id="nginx-conf">
+    <h2>7. nginx 설정</h2>
+    <p>아래 파일을 새로 생성한다.</p>
+    <pre><code>sudo vi /etc/nginx/conf.d/DOMAIN.conf</code></pre>
+
+    <pre><code>server {
+    listen 80;
+    server_name DOMAIN www.DOMAIN;
+
+    root /home/계정/www;
+    index index.php index.html index.htm;
+    charset utf-8;
+
+    access_log /var/log/nginx/DOMAIN.access.log;
+    error_log  /var/log/nginx/DOMAIN.error.log;
+
+    client_max_body_size 64M;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        try_files $uri =404;
+        fastcgi_pass unix:/run/php-fpm/www.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param SCRIPT_NAME $fastcgi_script_name;
+    }
+
+    # 그누보드/아미나 보안 차단: 업로드/스킨/플러그인 내 PHP 직접 실행 제한
+    location ~* /(data|install|plugin|skin|theme|thema|extend)/.*\.(php|php3|php4|php5|phtml)$ {
+        deny all;
+    }
+
+    # 민감 파일 차단
+    location ~* /(?:\.ht|\.git|\.svn|composer\.json|composer\.lock) {
+        deny all;
+    }
+
+    location ~* /(config\.php|dbconfig\.php)$ {
+        deny all;
+    }
+}</code></pre>
+
+    <h3>7-1. nginx 설정 검사 및 재시작</h3>
+    <pre><code>sudo nginx -t
+sudo systemctl restart nginx
+sudo systemctl restart php-fpm</code></pre>
+
+    <h3>7-2. SELinux 권한 처리</h3>
+    <p>웹 루트가 <code class="inline">/home/계정/www</code>이므로 SELinux 때문에 403 또는 Permission denied가 날 수 있다.</p>
+    <pre><code>sudo setsebool -P httpd_can_network_connect 1
+sudo semanage fcontext -a -t httpd_sys_content_t "/home/계정/www(/.*)?"
+sudo semanage fcontext -a -t httpd_sys_rw_content_t "/home/계정/www/data(/.*)?"
+sudo restorecon -Rv /home/계정/www</code></pre>
+  </section>
+
+  <section class="card" id="test">
+    <h2>8. 사전 테스트</h2>
+    <h3>8-1. hosts 파일 테스트</h3>
+    <p>운영 DNS를 바꾸기 전에 로컬 PC의 hosts 파일에 새 서버 IP를 임시 등록해서 테스트한다.</p>
+    <pre><code>NEW_IP DOMAIN
+NEW_IP www.DOMAIN</code></pre>
+
+    <h3>8-2. 테스트 항목</h3>
+    <div class="checklist">
+      <label><input type="checkbox"> 메인 페이지 정상 표시</label>
+      <label><input type="checkbox"> 관리자 로그인</label>
+      <label><input type="checkbox"> 회원 로그인</label>
+      <label><input type="checkbox"> 게시판 목록/상세 보기</label>
+      <label><input type="checkbox"> 글쓰기/수정/삭제</label>
+      <label><input type="checkbox"> 댓글 작성</label>
+      <label><input type="checkbox"> 이미지/파일 업로드</label>
+      <label><input type="checkbox"> 모바일 페이지</label>
+      <label><input type="checkbox"> 아미나 위젯/테마 정상 표시</label>
+      <label><input type="checkbox"> 메일 발송 기능</label>
+      <label><input type="checkbox"> PHP 오류 로그 확인</label>
+    </div>
+
+    <h3>8-3. 로그 확인</h3>
+    <pre><code>sudo tail -f /var/log/nginx/DOMAIN.error.log
+sudo journalctl -u php-fpm -f
+sudo journalctl -u mariadb -f</code></pre>
+  </section>
+
+  <section class="card" id="cutover">
+    <h2>9. 최종 전환 작업</h2>
+    <h3>9-1. 기존 서버 점검 모드 또는 쓰기 중지</h3>
+    <p>게시글/댓글/회원가입/파일업로드가 발생하지 않도록 잠시 점검 모드로 전환한다.</p>
+
+    <h3>9-2. 최종 DB 백업</h3>
+    <pre><code>mysqldump -u root -p \
+  --single-transaction \
+  --routines \
+  --triggers \
+  --events \
+  --default-character-set=utf8mb4 \
+  DB_NAME > /home/계정/migration-backup/DB_NAME-final-$(date +%F-%H%M).sql</code></pre>
+
+    <h3>9-3. 최종 파일 동기화</h3>
+    <p>기존 서버에서 실행:</p>
+    <pre><code>rsync -avz --delete \
+  -e "ssh -i /path/to/key.pem" \
+  /home/계정/www/ ec2-user@NEW_IP:/tmp/www-final/</code></pre>
+    <p>새 서버에서 실행:</p>
+    <pre><code>sudo rsync -av --delete /tmp/www-final/ /home/계정/www/
+sudo chown -R nginx:nginx /home/계정/www
+sudo chmod -R 707 /home/계정/www/data
+sudo rm -rf /home/계정/www/data/cache/* /home/계정/www/data/session/*</code></pre>
+
+    <h3>9-4. 최종 DB 복원</h3>
+    <pre><code>mysql -u DB_USER -p DB_NAME < /tmp/DB_NAME-final-YYYY-MM-DD-HHMM.sql</code></pre>
+
+    <h3>9-5. Static IP 또는 DNS 전환</h3>
+    <ul>
+      <li>Lightsail Static IP 사용 시: 기존 인스턴스에서 Static IP 분리 → 새 인스턴스에 연결</li>
+      <li>DNS A 레코드 사용 시: A 레코드를 새 서버 IP로 변경</li>
+    </ul>
+
+    <h3>9-6. HTTPS 발급/갱신</h3>
+    <pre><code>sudo dnf install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d DOMAIN -d www.DOMAIN
+sudo certbot renew --dry-run</code></pre>
+  </section>
+
+  <section class="card" id="rollback">
+    <h2>10. 롤백 계획</h2>
+    <div class="danger">
+      <strong>전환 후 최소 1~2주 동안 기존 AL2 서버를 삭제하지 않는다.</strong>
+    </div>
+    <h3>문제 발생 시 롤백</h3>
+    <ol>
+      <li>새 서버에서 장애 확인.</li>
+      <li>DNS A 레코드를 기존 OLD_IP로 되돌리거나 Static IP를 기존 인스턴스에 재연결.</li>
+      <li>기존 서버의 nginx/php-fpm/mariadb 상태 확인.</li>
+      <li>장애 원인 분석 후 새 서버에서 재테스트.</li>
+    </ol>
+    <pre><code>sudo systemctl status nginx php-fpm mariadb --no-pager
+sudo tail -100 /var/log/nginx/error.log</code></pre>
+  </section>
+
+  <section class="card" id="checklist">
+    <h2>11. 최종 체크리스트</h2>
+    <div class="checklist">
+      <label><input type="checkbox"> 기존 Lightsail 수동 스냅샷 완료</label>
+      <label><input type="checkbox"> 기존 PHP 8.0.30 확인</label>
+      <label><input type="checkbox"> 기존 웹 루트 /home/계정/www 확인</label>
+      <label><input type="checkbox"> www tar 백업 완료</label>
+      <label><input type="checkbox"> DB mysqldump 완료</label>
+      <label><input type="checkbox"> nginx/PHP/MariaDB 설정 백업 완료</label>
+      <label><input type="checkbox"> 새 AL2023 인스턴스 생성</label>
+      <label><input type="checkbox"> nginx 설치 및 기동</label>
+      <label><input type="checkbox"> PHP-FPM 설치 및 기동</label>
+      <label><input type="checkbox"> MariaDB 설치 및 기동</label>
+      <label><input type="checkbox"> www 파일 복원</label>
+      <label><input type="checkbox"> DB 복원</label>
+      <label><input type="checkbox"> dbconfig.php 확인</label>
+      <label><input type="checkbox"> nginx server block 적용</label>
+      <label><input type="checkbox"> SELinux 컨텍스트 적용</label>
+      <label><input type="checkbox"> hosts 파일로 사전 테스트</label>
+      <label><input type="checkbox"> 글쓰기/업로드/로그인 테스트</label>
+      <label><input type="checkbox"> 최종 DB 백업 및 복원</label>
+      <label><input type="checkbox"> 최종 파일 rsync</label>
+      <label><input type="checkbox"> Static IP 또는 DNS 전환</label>
+      <label><input type="checkbox"> HTTPS 인증서 발급</label>
+      <label><input type="checkbox"> 전환 후 로그 모니터링</label>
+      <label><input type="checkbox"> 기존 AL2 서버 1~2주 보관</label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>12. 참고 메모</h2>
+    <ul>
+      <li>AL2023은 AL2와 패키지 구성이 다르므로 기존 패키지 목록을 그대로 복제하지 말고 필요한 구성요소를 새로 설치한다.</li>
+      <li>아미나빌더/그누보드 환경은 <code class="inline">data</code> 디렉터리 권한, PHP 확장, DB 문자셋, nginx 보안 차단 설정이 중요하다.</li>
+      <li>nginx는 Apache의 .htaccess를 사용하지 않으므로 업로드 디렉터리 PHP 실행 차단을 nginx 설정에 직접 넣어야 한다.</li>
+      <li>PHP 8.0.30에서 운영 중이므로 새 서버의 PHP가 8.1/8.2 이상일 경우 Deprecated/Warning/치명 오류가 발생할 수 있다. 반드시 사전 테스트한다.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  Amazon Lightsail AL2 → AL2023 Migration Guide / nginx + PHP-FPM + MariaDB + Amina Builder
+</footer>
+</body>
+</html>
