@@ -111,7 +111,12 @@ append_raw() {
   local title="$1"
   shift
   local value="$*"
-  RAW_DATA="${RAW_DATA}### ${title}\n${value:-"(empty)"}\n\n"
+
+  if [ -z "$value" ]; then
+    value="(empty)"
+  fi
+
+  RAW_DATA="${RAW_DATA}### ${title}\n${value}\n\n"
 }
 
 write_item() {
