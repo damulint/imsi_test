@@ -310,13 +310,59 @@ check_connection() {
 }
 
 collect_root_db_process() {
-  ps -eo user,args 2>/dev/null | awk '
-    NR > 1 &&
-    $1 == "root" &&
-    $0 ~ /oracle|tnslsnr|mysqld|mariadbd|mysql.server|postgres|altibase|tbsvr|tblistener|cub_master|cub_broker/ {
-      print
-    }'
+  ps -eo pid=," in  ps -eo pid=,user=,comm=,args= 2>/dev/null | while read -r pid user comm args; do
+          oracle|ora_*|tnslsnr)
+            printf "%-8s %-8s %-20s %s\n" "$user" "$pid" "$comm" "$args"
+            ;;
+        esac
+        ;;
+
+      mysql)
+        case "$comm" in
+          mysqld|mariadbd)
+            printf "%-8s %-8s %-20s %s\n" "$user" "$pid" "$comm" "$args"
+            ;;
+        esac
+        ;;
+
+      postgresql)
+        case "$comm" in
+          postgres|postmaster)
+            printf "%-8s %-8s %-20s %s\n" "$user" "$pid" "$comm" "$args"
+            ;;
+        esac
+        ;;
+
+      altibase)
+        case "$comm" in
+          altibase|altibaseboot|altimon)
+            printf "%-8s %-8s %-20s %s\n" "$user" "$pid" "$comm" "$args"
+            ;;
+        esac
+        ;;
+
+      tibero)
+        case "$comm" in
+          tbsvr|tblistener)
+            printf "%-8s %-8s %-20s %s\n" "$user" "$pid" "$comm" "$args"
+            ;;
+        esac
+        ;;
+
+      cubrid)
+        case "$comm" in
+          cub_master|cub_broker|cub_server)
+            printf "%-8s %-8s %-20s %s\n" "$user" "$pid" "$comm" "$args"
+            ;;
+        esac
+        ;;
+    esac
+  done
 }
+    [ "$user" = "root" ] || continue
+
+    case "$DBMS" in
+      oracle)
 
 collect_db_process() {
   ps -ef 2>/dev/null | egrep -i 'oracle|tnslsnr|mysqld|mariadbd|mysql.server|postgres|altibase|tbsvr|tblistener|cub_master|cub_broker' | grep -v grep | head -80
