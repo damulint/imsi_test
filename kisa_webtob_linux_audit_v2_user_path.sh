@@ -177,15 +177,19 @@ WEBTOB_VER="$(
 )"
 
 CONFIG_FILES="$(
-  find "$WEBTOB_HOME" -type f \( -iname '*.m' -o -iname '*.conf' -o -iname '*.cfg' -o -iname 'http.m' -o -iname 'wsconfig' \) 2>/dev/null | head -20
+  find "$WEBTOB_HOME" -type f \( -iname '*.m' -o -iname '*.conf' -o -iname '*.cfg' -o -iname 'http.m' -o -iname 'wsconfig' \) 2>/dev/null | head -50
 )"
 
 CONFIG_RAW="$(
-  for f in $CONFIG_FILES; do
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -f "$f" ] || continue
     echo "# FILE: $f"
     sed -n '1,400p' "$f" 2>/dev/null
     echo
-  done
+  done <<EOF
+$CONFIG_FILES
+EOF
 )"
 
 {
@@ -289,4 +293,32 @@ append_raw "candidate config content" "$CONFIG_RAW"
 append_raw "ssl matches" "$ssl"
 append_raw "proxy matches" "$proxy"
 append_raw "ldap matches" "$ldap"
+
+append_raw "process list webtob related" "$(ps -ef 2>/dev/null | grep -Ei 'webtob|wsboot|wscfl|wsm|htl|htmls|httpd.webtob' | grep -v grep)"
+append_raw "listening ports" "$(ss -lntp 2>/dev/null | grep -Ei 'webtob|wsboot|httpd|htl|htmls' || netstat -lntp 2>/dev/null | grep -Ei 'webtob|wsboot|httpd|htl|htmls')"
+append_raw "webtob bin list" "$(ls -al "$WEBTOB_HOME/bin" 2>/dev/null)"
+append_raw "webtob config dir list" "$(ls -al "$WEBTOB_HOME/config" "$WEBTOB_HOME/conf" 2>/dev/null)"
+append_raw "webtob log dir list" "$(ls -al "$WEBTOB_HOME/log" "$WEBTOB_HOME/logs" 2>/dev/null)"
+append_raw "webtob home tree shallow" "$(find "$WEBTOB_HOME" -maxdepth 3 -printf '%M %u %g %s %p\n' 2>/dev/null | head -300)"
+
+append_raw "ssl matches" "$ssl"
+append_raw "proxy matches" "$proxy"
+append_raw "ldap matches" "$ldap"
+
+append_raw "directory listing matches" "$listings"append_raw "directory listing matches" "$docroot"
+append_raw "symlink/alias matches" "$symlink_cfg"
+append_raw "script mapping matches" "$scriptmap"
+append_raw "header/version matches" "$headerhide"
+append_raw "virtual dir matches" "$vdir"
+append_raw "webdav/method matches" "$webdav"
+append_raw "ssi matches" "$ssi"
+append_raw "redirect https matches" "$redirect_https"
+append_raw "error page matches" "$errpage"
+append_raw "upload dir candidates" "$uploads"
+append_raw "default/sample file candidates" "$default_files"
+append_raw "log dir candidate" "$logdir"
+append_raw "permission loose candidates" "$perm_vuln"
+append_raw "cgi matches" "$cgi_exec"
+append_raw "auth/access matches" "$auth_related"
+
 finish_report
