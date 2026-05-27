@@ -1,4 +1,25 @@
-cp -p webtob_audit_chk.sh webtob_audit_chk.sh.bak 2>/dev/nullcp -p webtob_audit_chk.sh webtob_audit_chk.sh.b" "$IPV6_LIST"
+#!/bin/bash
+set +e
+set -o pipefail 2>/dev/null || true
+export LANG"export LANG=C
+    printf "VERDICT        : %s\n" "$verdict"
+    printf "CURRENT        : %s\n" "$current"
+    printf "BASIS          : %s\n" "$basis"
+    printf "ACTION         : %s\n" "$action"
+    echo
+  } >> "$OUTFILE"
+}
+
+print_profile_table() {
+  {
+    echo "============================================================"
+    printf "%s\n" "$1"
+    echo "============================================================"
+    echo "[SERVER PROFILE]"
+    printf "Hostname   : %s\n" "$HOSTNAME_SHORT"
+    printf "FQDN       : %s\n" "$HOSTNAME_FQDN"
+    printf "IPv4       : %s\n" "$IPV4_LIST"
+    printf "IPv6       : %s\n" "$IPV6_LIST"
     printf "OS Name    : %s\n" "$OS_NAME"
     printf "OS Version : %s\n" "$OS_VERSION"
     printf "Exec User  : %s\n" "$EXEC_USER"
@@ -535,15 +556,6 @@ append_raw "ldap matches" "$ldap"
 append_raw "permission vulnerable list" "$(printf "%b" "$perm_vuln")"
 
 finish_report
-EOF
-
-chmod +x webtob_audit_chk.sh
-
-cat > webtob_audit_chk.sh <<'EOF'
-#!/bin/bash
-set +e
-set -o pipefail 2>/dev/null || true
-export LANG=C
 export LC_ALL=C
 
 HOSTNAME_FQDN="$(hostname -f 2>/dev/null || hostname 2>/dev/null)"
@@ -601,21 +613,3 @@ write_item() {
     printf "IMPORTANCE     : %s\n" "$imp"
     printf "CHECK ITEM     : %s\n" "$title"
     printf "TARGET         : %s\n" "$target"
-    printf "RESULT CODE    : %s\n" "$result"
-    printf "VERDICT        : %s\n" "$verdict"
-    printf "CURRENT        : %s\n" "$current"
-    printf "BASIS          : %s\n" "$basis"
-    printf "ACTION         : %s\n" "$action"
-    echo
-  } >> "$OUTFILE"
-}
-
-print_profile_table() {
-  {
-    echo "============================================================"
-    printf "%s\n" "$1"
-    echo "============================================================"
-    echo "[SERVER PROFILE]"
-    printf "Hostname   : %s\n" "$HOSTNAME_SHORT"
-    printf "FQDN       : %s\n" "$HOSTNAME_FQDN"
-    printf "IPv4       : %s\n" "$IPV4_LIST"
